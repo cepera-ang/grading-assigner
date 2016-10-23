@@ -1,3 +1,4 @@
+# coding=utf-8
 #!/usr/bin/env python
 import signal
 import sys
@@ -28,6 +29,7 @@ ASSIGNED_URL = '{}/me/submissions/assigned.json'.format(BASE_URL)
 REVIEW_URL = 'https://review.udacity.com/#!/submissions/{sid}'
 REQUESTS_PER_SECOND = 1 # Please leave this alone.
 
+WAIT_REQUEST_URL = '{}/submission_requests/{}/waits'
 logging.basicConfig(format='|%(asctime)s| %(message)s')
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -106,8 +108,20 @@ def request_reviews(token):
     logger.info("Will poll for projects/languages %s", str(project_language_pairs))
 
     me_req_resp = requests.get(ME_REQUEST_URL, headers=headers)
-    current_request = me_req_resp.json()[0] if me_req_resp.status_code == 201 and len(me_req_resp.json()) > 0 else None
+    logger.info(me_req_resp.status_code)
+    logger.info(me_req_resp.json() if len(me_req_resp.json()) > 0 else '')
+    # If there is any answer except empty, it means we have active submission and should cancel it first
+    if me_req_resp.json():
+        del_resp = requests.delete(DELETE_URL_TMPL.format(BASE_URL, me_req_resp.json()[0]['id']),
+                                   headers=headers)
+        logger.info('Successful deletion ' + del_resp.text)
+    else:
+        logger.info('No requests')
+
+    current_request = me_req_resp.json()[0] if me_req_resp.status_code == 200 and len(me_req_resp.json()) > 0 else None
+
     if current_request:
+        logger.info('Current request: ' + str(current_request['id']))
         update_resp = requests.put(PUT_REQUEST_URL_TMPL.format(BASE_URL, current_request['id']),
                                    json={'projects': project_language_pairs}, headers=headers)
         current_request = update_resp.json() if update_resp.status_code == 200 else current_request
@@ -125,7 +139,6 @@ def request_reviews(token):
                                         headers=headers)
             current_request = create_resp.json() if create_resp.status_code == 201 else None
         else:
-            logger.info(current_request)
             closing_at = parser.parse(current_request['closed_at'])
 
             utcnow = datetime.utcnow()
@@ -148,6 +161,9 @@ def request_reviews(token):
         current_request = alert_for_assignment(current_request, headers)
         if current_request:
             # Wait 2 minutes before next check to see if the request has been fulfilled
+            queue = requests.get(WAIT_REQUEST_URL.format(BASE_URL, current_request['id']), headers=headers)
+            logger.info('Current request ID ' + str(current_request['id']))
+            logger.info('Queue befor me: ' + str(queue.json()))
             time.sleep(120.0)
 
 if __name__ == "__main__":
@@ -172,4 +188,3 @@ if __name__ == "__main__":
         logger.setLevel(logging.DEBUG)
 
     request_reviews(args.token)
-
